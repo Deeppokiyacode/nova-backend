@@ -29,7 +29,10 @@ SECRET_KEY = 'django-insecure-*sr+(wz0b8mv!&z*=-q!1t*qs==2it+=yai=of_!zglc$a3jhk
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.environ.get(
+    "DJANGO_ALLOWED_HOSTS",
+    "nova-backend-jw9s.onrender.com,localhost,127.0.0.1"
+).split(",")
 
 
 # Application definition
@@ -134,7 +137,15 @@ MAILERS = {
     },
 }
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
+CORS_ALLOWED_ORIGINS = os.environ.get(
+    "DJANGO_CORS_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173,"
+    "https://nova-backend-git-main-deep-6e1f.vercel.app,"
+    "https://nova-backend-l4fa0g724-deep-6e1f.vercel.app"
+).split(",")
+
+# Vercel preview URLs change on every deploy (e.g. l4fa0g724 -> a new hash next time).
+# This regex covers any preview URL under your Vercel project automatically.
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://nova-backend-.*-deep-6e1f\.vercel\.app$",
 ]
