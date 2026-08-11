@@ -40,18 +40,20 @@ export default function Login() {
 
           <div className="w-full space-y-4">
             
-            {/* Fake Email Input (Design purpose only) */}
+            {/* Email authentication has not been configured for this app. */}
             <div className="relative">
               <Mail className="absolute left-3 top-3 text-gray-500" size={20} />
-              <input 
+              <input
                 type="email" 
                 placeholder="Email address" 
+                disabled
+                aria-label="Email sign-in is unavailable"
                 className="w-full bg-gray-950 border border-gray-800 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-blue-500 transition-colors"
               />
             </div>
-            
-            <button className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(37,99,235,0.4)]">
-              Continue with Email
+
+            <button type="button" disabled className="w-full bg-gray-700 text-gray-400 font-semibold py-3 rounded-xl cursor-not-allowed">
+              Email sign-in unavailable
             </button>
 
             <div className="flex items-center my-6">

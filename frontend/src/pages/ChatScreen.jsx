@@ -1,11 +1,12 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Send, User, Bot, Loader2, LogOut, MessageSquare, Plus, Menu, X, Sparkles } from 'lucide-react';
+import { Send, Bot, LogOut, MessageSquare, Menu, X, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../firebase';
-import { collection, addDoc, getDocs, updateDoc, doc, query, where, orderBy, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, getDocs, updateDoc, doc, query, where, serverTimestamp } from 'firebase/firestore';
 
 export default function Chat() {
   const [messages, setMessages] = useState([]);
@@ -17,27 +18,34 @@ export default function Chat() {
   
   const messagesEndRef = useRef(null);
   const navigate = useNavigate();
-  const user = auth.currentUser;
+  const [user, setUser] = useState(undefined);
+
+  useEffect(() => onAuthStateChanged(auth, setUser), []);
+
+  const loadChatHistory = useCallback(async () => {
+    if (!user) return;
+    try {
+      // Sorting locally avoids requiring a composite Firestore index for this query.
+      const q = query(collection(db, 'chats'), where('userId', '==', user.uid));
+      const querySnapshot = await getDocs(q);
+      const chats = querySnapshot.docs
+        .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
+        .sort((a, b) => (b.updatedAt?.toMillis?.() ?? 0) - (a.updatedAt?.toMillis?.() ?? 0));
+      setChatHistory(chats);
+    } catch (error) {
+      console.error('Unable to load chat history:', error);
+    }
+  }, [user]);
 
   useEffect(() => {
+    if (user === undefined) return;
     if (!user) navigate('/');
     else loadChatHistory();
-  }, [user, navigate]);
+  }, [user, navigate, loadChatHistory]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  const loadChatHistory = async () => {
-    if (!user) return;
-    const q = query(collection(db, 'chats'), where('userId', '==', user.uid), orderBy('updatedAt', 'desc'));
-    const querySnapshot = await getDocs(q);
-    const chats = [];
-    querySnapshot.forEach((doc) => {
-      chats.push({ id: doc.id, ...doc.data() });
-    });
-    setChatHistory(chats);
-  };
 
   const handleNewChat = () => {
     setCurrentChatId(null);
@@ -53,7 +61,7 @@ export default function Chat() {
 
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() || loading || !user) return;
 
     const userMsg = input;
     setInput('');
@@ -65,11 +73,36 @@ export default function Chat() {
     try {
       setMessages((prev) => [...prev, { role: 'ai', text: '' }]);
 
-      const response = await fetch('https://nova-backend-jw9s.onrender.com/api/chat/ask/', {
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'https://nova-backend-jw9s.onrender.com';
+      const firebaseToken = await user.getIdToken();
+      const response = await fetch(`${apiBaseUrl}/api/chat/ask/`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${firebaseToken}`,
+        },
+        body: JSON.stringify({ message: userMsg, history: messages }),
       });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        let errorMessage = `Request failed with status ${response.status}`;
+
+        if (errorBody) {
+          try {
+            const errorData = JSON.parse(errorBody);
+            errorMessage = errorData.detail || errorData.message || errorMessage;
+          } catch {
+            errorMessage = errorBody;
+          }
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      if (!response.body) {
+        throw new Error('The server returned an empty response.');
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
@@ -109,11 +142,19 @@ export default function Chat() {
       }
 
     } catch (error) {
-      setMessages((prev) => [...prev.slice(0, -1), { role: 'ai', text: 'Error: Connection failed to NovaAI servers.' }]);
+      console.error('NovaAI request failed:', error);
+      const errorMessage = error instanceof Error
+        ? error.message
+        : 'Connection failed to NovaAI servers.';
+      setMessages((prev) => [...prev.slice(0, -1), { role: 'ai', text: `Error: ${errorMessage}` }]);
     } finally {
       setLoading(false);
     }
   };
+
+  if (user === undefined) {
+    return <div className="min-h-screen bg-[#050505]" aria-label="Loading" />;
+  }
 
   const userAvatar = user?.photoURL || `https://ui-avatars.com/api/?name=${user?.displayName || 'User'}&background=6366f1&color=fff`;
 
@@ -216,7 +257,7 @@ export default function Chat() {
                           <div className="prose prose-invert prose-base max-w-none prose-p:leading-relaxed prose-ol:list-decimal prose-ul:list-disc prose-li:my-1 prose-pre:p-0 prose-pre:bg-transparent prose-code:text-indigo-300">
                             <ReactMarkdown
                               components={{
-                                code({node, inline, className, children, ...props}) {
+                                code({node: _node, inline, className, children, ...props}) {
                                   const match = /language-(\w+)/.exec(className || '')
                                   return !inline && match ? (
                                     <div className="rounded-xl overflow-hidden my-5 bg-[#0d0d0f] border border-white/10 shadow-2xl">
@@ -225,12 +266,13 @@ export default function Chat() {
                                       </div>
                                       <SyntaxHighlighter
                                         {...props}
-                                        children={String(children).replace(/\n$/, '')}
                                         style={vscDarkPlus}
                                         language={match[1]}
                                         PreTag="div"
                                         customStyle={{ margin: 0, padding: '1.25rem', background: 'transparent', fontSize: '0.9rem' }}
-                                      />
+                                      >
+                                        {String(children).replace(/\n$/, '')}
+                                      </SyntaxHighlighter>
                                     </div>
                                   ) : (
                                     <code {...props} className="bg-indigo-500/10 text-indigo-300 px-1.5 py-0.5 rounded-md text-sm font-mono border border-indigo-500/20">

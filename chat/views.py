@@ -3,10 +3,12 @@
 import os
 import logging
 
-from django.http import StreamingHttpResponse
+from django.http import JsonResponse, StreamingHttpResponse
 from rest_framework.decorators import api_view
 
 from dotenv import load_dotenv
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 from google import genai
 from google.genai import types
 
@@ -18,6 +20,9 @@ from google.genai import types
 load_dotenv()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID")
+FIREBASE_AUTH_REQUIRED = os.environ.get("FIREBASE_AUTH_REQUIRED", "False").lower() == "true"
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +31,7 @@ logger = logging.getLogger(__name__)
 # Gemini Client
 # ---------------------------------------------------------
 
-if not GEMINI_API_KEY:
-    raise RuntimeError(
-        "GEMINI_API_KEY is missing. "
-        "Add it to your .env file."
-    )
-
-client = genai.Client(
-    api_key=GEMINI_API_KEY
-)
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
 # ---------------------------------------------------------
@@ -119,6 +116,9 @@ def build_contents(history, user_message):
 
         for message in recent_history:
 
+            if not isinstance(message, dict):
+                continue
+
             role = message.get("role")
             text = message.get("text")
 
@@ -164,8 +164,52 @@ def build_contents(history, user_message):
 # Chat API
 # ---------------------------------------------------------
 
+@api_view(["GET"])
+def health_check(request):
+    return JsonResponse({"status": "ok"})
+
+
+def verify_firebase_token(request):
+    """Return an error response unless the request has a valid Firebase ID token."""
+    if not FIREBASE_AUTH_REQUIRED:
+        return None
+
+    if not FIREBASE_PROJECT_ID:
+        return JsonResponse(
+            {"detail": "Firebase authentication is not configured."},
+            status=503,
+        )
+
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return JsonResponse({"detail": "Authentication is required."}, status=401)
+
+    try:
+        id_token.verify_firebase_token(
+            token,
+            google_requests.Request(),
+            audience=FIREBASE_PROJECT_ID,
+        )
+    except Exception:
+        logger.warning("Rejected request with an invalid Firebase ID token")
+        return JsonResponse({"detail": "Invalid authentication token."}, status=401)
+
+    return None
+
+
 @api_view(["POST"])
 def chat_with_ai(request):
+
+    authentication_error = verify_firebase_token(request)
+    if authentication_error:
+        return authentication_error
+
+    if client is None:
+        return JsonResponse(
+            {"detail": "The AI service is not configured."},
+            status=503,
+        )
 
     # -----------------------------------------------------
     # Get user message
@@ -214,7 +258,7 @@ def chat_with_ai(request):
 
             response = client.models.generate_content_stream(
 
-                model="gemini-3.5-flash",
+                model=GEMINI_MODEL,
 
                 contents=contents,
 
