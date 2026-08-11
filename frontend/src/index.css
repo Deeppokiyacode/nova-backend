@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
-/* Ye custom scrollbar UI ko aur premium banayega */
+/* Custom scrollbar UI ko aur premium banayega */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
