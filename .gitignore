@@ -1,0 +1,6 @@
+venv/
+node_modules/
+frontend/
+.env
+db.sqlite3
+__pycache__/
